@@ -1,9 +1,7 @@
 package stack;
 
-import kotlinx.atomicfu.AtomicInt;
-import kotlinx.atomicfu.AtomicIntArray;
-import kotlinx.atomicfu.AtomicLong;
 import kotlinx.atomicfu.AtomicRef;
+import java.util.ArrayList;
 
 public class StackImpl implements Stack {
     private static class Node {
@@ -16,80 +14,84 @@ public class StackImpl implements Stack {
         }
     }
 
+    private enum Status {EMPTY, WAITING, POPPED, PREPOPPED, PREPUSHED}
+
     private static class EliminationArray {
         final int capacity;
-        final int empty;
-        AtomicIntArray eliminationArray;
+        final AtomicRef<Integer> empty;
+        ArrayList<Integer> array;
+        ArrayList<AtomicRef<Status>> statusArray;
 
         EliminationArray(int size) {
             capacity = size;
-            empty = Integer.MIN_VALUE;
-            eliminationArray = new AtomicIntArray(capacity);
+            empty = new AtomicRef<Integer>(Integer.MIN_VALUE);
+            array = new ArrayList<Integer>();
+            statusArray = new ArrayList<AtomicRef<Status>>();
             for (int i = 0; i < capacity; i++) {
-                eliminationArray.get(i).setValue(empty);
+                array.add(0);
+                statusArray.add(new AtomicRef<Status>(Status.EMPTY));
             }
-        }
-
-        int tryPush(int index, int value) {
-            if (eliminationArray.get(index).compareAndSet(empty, value)) return index;
-            if (index != 0 && eliminationArray.get(index - 1).compareAndSet(empty, value)) return index - 1;
-            if (index != capacity - 1 && eliminationArray.get(index + 1).compareAndSet(empty, value)) return index + 1;
-            return -1;
-        }
-
-        int tryExchange(int index) {
-            int atom = eliminationArray.get(index).getValue();
-            if (atom != empty && eliminationArray.get(index).compareAndSet(atom, empty)) return atom;
-            if (index != 0) {
-                atom = eliminationArray.get(index - 1).getValue();
-                if (atom != empty && eliminationArray.get(index - 1).compareAndSet(atom, empty)) return atom;
-            }
-            if (index != capacity - 1) {
-                atom = eliminationArray.get(index + 1).getValue();
-                if (index != capacity - 1 && atom != empty && eliminationArray.get(index + 1).compareAndSet(atom, empty))
-                    return atom;
-            }
-            return empty;
         }
     }
 
-    // head pointer
     private AtomicRef<Node> head = new AtomicRef<>(null);
-    private EliminationArray eliminationArray = new EliminationArray(4);
+    private EliminationArray eliminationArray = new EliminationArray(16);
 
     @Override
     public void push(int x) {
         int index = (int) (Math.random() * eliminationArray.capacity);
-        int pushIndex = eliminationArray.tryPush(index, x);
-        if (pushIndex != -1) {
-            long end = System.currentTimeMillis() + 10;
-            while (System.currentTimeMillis() < end) {
-                if (eliminationArray.eliminationArray.get(pushIndex).compareAndSet(eliminationArray.empty, eliminationArray.empty))
+        int pushIndex = eliminationArray.empty.getValue();
+        if (eliminationArray.statusArray.get(index).compareAndSet(Status.EMPTY, Status.PREPUSHED)) {
+            eliminationArray.array.set(index, x);
+            pushIndex = index;
+        } else if (index != 0 && eliminationArray.statusArray.get(index - 1).compareAndSet(Status.EMPTY, Status.PREPUSHED)) {
+            eliminationArray.array.set(index - 1, x);
+            pushIndex = index - 1;
+        } else if (index != eliminationArray.capacity - 1 && eliminationArray.statusArray.get(index + 1).compareAndSet(Status.EMPTY, Status.PREPUSHED)) {
+            eliminationArray.array.set(index + 1, x);
+            pushIndex = index + 1;
+        }
+        if (pushIndex != eliminationArray.empty.getValue()) {
+            eliminationArray.statusArray.get(pushIndex).compareAndSet(Status.PREPUSHED, Status.WAITING);
+            final long t = System.nanoTime() + 1;
+            while (System.nanoTime() < t) {
+                if (eliminationArray.statusArray.get(pushIndex).compareAndSet(Status.POPPED, Status.EMPTY))
                     return;
             }
-//            eliminationArray.eliminationArray.get(pushIndex).setValue(eliminationArray.empty);
-            if (!eliminationArray.eliminationArray.get(pushIndex).compareAndSet(x, eliminationArray.empty))
+            if (!eliminationArray.statusArray.get(pushIndex).compareAndSet(Status.WAITING, Status.PREPUSHED)) {
+                eliminationArray.statusArray.get(pushIndex).compareAndSet(Status.POPPED, Status.EMPTY);
                 return;
-        }
-        while (true) {
-//            System.out.println("push");
-
-            Node h = head.getValue();
-            if (head.compareAndSet(h, new Node(x, h))) {
-                break;
             }
         }
-        //head.setValue(new Node(x, head.getValue()));
+        while (true) {
+            Node h = head.getValue();
+            if ((pushIndex == eliminationArray.empty.getValue() && head.compareAndSet(h, new Node(x, h))) ||
+                    (pushIndex != eliminationArray.empty.getValue() && head.compareAndSet(h, new Node(x, h)) && eliminationArray.statusArray.get(pushIndex).compareAndSet(Status.PREPUSHED, Status.EMPTY))) {
+                return;
+            }
+        }
     }
 
     @Override
     public int pop() {
         int index = (int) (Math.random() * eliminationArray.capacity);
-        int popResult = eliminationArray.tryExchange(index);
-        if (popResult != eliminationArray.empty)
+        int popResult = eliminationArray.empty.getValue();
+        int popIndex = eliminationArray.empty.getValue();
+        if (eliminationArray.statusArray.get(index).compareAndSet(Status.WAITING, Status.PREPOPPED)) {
+            popResult = eliminationArray.array.get(index);
+            popIndex = index;
+        } else if (index != 0 && eliminationArray.statusArray.get(index - 1).compareAndSet(Status.WAITING, Status.PREPOPPED)) {
+            popResult = eliminationArray.array.get(index - 1);
+            popIndex = index - 1;
+        } else if (index != eliminationArray.capacity - 1 && eliminationArray.statusArray.get(index + 1).compareAndSet(Status.WAITING, Status.PREPOPPED)) {
+            popResult = eliminationArray.array.get(index + 1);
+            popIndex = index + 1;
+        }
+        if (popIndex != eliminationArray.empty.getValue()) {
+            eliminationArray.statusArray.get(popIndex).compareAndSet(Status.PREPOPPED, Status.POPPED);
             return popResult;
+        }
         while (true) {
-//            System.out.println("pop");
             Node h = head.getValue();
             if (h == null)
                 return Integer.MIN_VALUE;
