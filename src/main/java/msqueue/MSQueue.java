@@ -3,84 +3,63 @@ package msqueue;
 import kotlinx.atomicfu.AtomicRef;
 
 public class MSQueue implements Queue {
-    private Node head;
-    private Node tail;
-
-    private enum Status {CHANGING, VALID}
-
-    private AtomicRef<Status> headStatus;
-    private AtomicRef<Status> tailStatus;
+    private AtomicRef<Node> head;
+    private AtomicRef<Node> tail;
 
     public MSQueue() {
         Node dummy = new Node(0);
-        this.head = dummy;
-        this.tail = dummy;
-        this.headStatus = new AtomicRef<>(Status.VALID);
-        this.tailStatus = new AtomicRef<>(Status.VALID);
+        head = new AtomicRef<Node>(dummy);
+        tail = new AtomicRef<Node>(dummy);
     }
 
     @Override
     public void enqueue(int x) {
+        Node newTail = new Node(x);
         while (true) {
-            if (tailStatus.compareAndSet(Status.VALID, Status.CHANGING)) {
-                Node newTail = new Node(x);
-                tail.next = newTail;
-                tail = newTail;
-                tailStatus.compareAndSet(Status.CHANGING, Status.VALID);
+            Node last = tail.getValue();
+            if (last.next.compareAndSet(null, newTail)) {
+                tail.compareAndSet(last, newTail);
                 return;
-            }
+            } else
+                tail.compareAndSet(last, last.next.getValue());
         }
     }
 
     @Override
     public int dequeue() {
         while (true) {
-            if (headStatus.compareAndSet(Status.VALID, Status.CHANGING)) {
-                while (true) {
-                    if (tailStatus.compareAndSet(Status.VALID, Status.CHANGING)) {
-                        int result = Integer.MIN_VALUE;
-                        Node curHead = head;
-                        if (curHead != tail) {
-                            Node next = head.next;
-                            head = next;
-                            result = next.x;
-                        }
-                        tailStatus.compareAndSet(Status.CHANGING, Status.VALID);
-                        headStatus.compareAndSet(Status.CHANGING, Status.VALID);
-                        return result;
-                    }
-                }
-            }
+            Node first = head.getValue();
+            Node last = tail.getValue();
+            Node firstNext = first.next.getValue();
+            if (last == first)
+                if (firstNext == null) return Integer.MIN_VALUE;
+                else
+                    tail.compareAndSet(last, firstNext);
+            else if (head.compareAndSet(first, firstNext)) return firstNext.x;
         }
     }
 
     @Override
     public int peek() {
         while (true) {
-            if (headStatus.compareAndSet(Status.VALID, Status.CHANGING)) {
-                while (true) {
-                    if (tailStatus.compareAndSet(Status.VALID, Status.CHANGING)) {
-                        Node curHead = head;
-                        int result = Integer.MIN_VALUE;
-                        if (curHead != tail) {
-                            Node next = head.next;
-                            result = next.x;
-                        }
-                        tailStatus.compareAndSet(Status.CHANGING, Status.VALID);
-                        headStatus.compareAndSet(Status.CHANGING, Status.VALID);
-                        return result;
-                    }
-                }
-            }
+            Node first = head.getValue();
+            Node last = tail.getValue();
+            Node firstNext = first.next.getValue();
+            if (last == first)
+                if (firstNext == null) return Integer.MIN_VALUE;
+                else
+                    tail.compareAndSet(last, firstNext);
+            else if (head.compareAndSet(first, first)) return firstNext.x;
         }
     }
 
     private class Node {
         final int x;
-        Node next;
+        AtomicRef<Node> next;
 
         Node(int x) {
             this.x = x;
+            next = new AtomicRef<Node>(null);
         }
     }
 }
