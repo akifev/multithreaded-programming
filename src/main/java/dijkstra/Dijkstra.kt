@@ -61,10 +61,14 @@ class MultiPriorityQueue(workers: Int, nodeDistanceComparator: Comparator<Node>)
 
     fun poll(): Node? {
         for (i in 0..3) {
-            val first: Int = (0 until size).random()
-            val second: Int = (0 until size).random()
+            var first: Int = (0 until size).random()
+            var second: Int = (0 until size).random()
             if (first == second) {
                 continue;
+            } else {
+                if (first > second) {
+                    first = second.also { second = first }
+                }
             }
             synchronized(list[first]) {
                 synchronized(list[second]) {
