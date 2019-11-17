@@ -1,8 +1,10 @@
 package dijkstra
 
+import kotlinx.atomicfu.AtomicInt
 import kotlinx.atomicfu.atomic
 import java.util.*
 import java.util.concurrent.Phaser
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.Comparator
 import kotlin.concurrent.thread
 
@@ -15,11 +17,11 @@ fun shortestPathParallel(start: Node) {
     val q = MultiPriorityQueue(workers, NODE_DISTANCE_COMPARATOR)
     q.add(start)
     val onFinish = Phaser(workers + 1)
-    val activeNodes = atomic(1)
+    val activeNodes = AtomicInteger(1)
     repeat(workers) {
         thread {
             while (true) {
-                val cur: Node = q.poll() ?: if (activeNodes.value > 0) continue else break
+                val cur: Node = q.poll() ?: if (activeNodes.get() > 0) continue else break
                 for (e in cur.outgoingEdges) {
                     CASloop@ while (true) {
                         val curDistance = e.to.distance
