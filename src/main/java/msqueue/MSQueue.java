@@ -20,8 +20,7 @@ public class MSQueue implements Queue {
             if (last.next.compareAndSet(null, newTail)) {
                 tail.compareAndSet(last, newTail);
                 return;
-            } else
-                tail.compareAndSet(last, last.next.getValue());
+            }
         }
     }
 
