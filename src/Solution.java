@@ -4,6 +4,15 @@ public class Solution implements AtomicCounter {
     private final ThreadLocal<Node> tail =
             ThreadLocal.withInitial(() -> head);
 
+    private static class Node {
+        final int value;
+        final Consensus<Node> next = new Consensus<>();
+
+        Node(int value) {
+            this.value = value;
+        }
+    }
+
     public int getAndAdd(int x) {
         while (true) {
             final int oldValue = tail.get().value;
@@ -13,15 +22,6 @@ public class Solution implements AtomicCounter {
             if (tail.get() == newNode) {
                 return oldValue;
             }
-        }
-    }
-
-    private static class Node {
-        final int value;
-        final Consensus<Node> next = new Consensus<>();
-
-        Node(int value) {
-            this.value = value;
         }
     }
 }
