@@ -23,16 +23,16 @@ fun shortestPathParallel(start: Node) {
             while (true) {
                 val cur: Node = q.poll() ?: if (activeNodes.get() > 0) continue else break
                 for (e in cur.outgoingEdges) {
-                    CASloop@ while (true) {
+                    while (true) {
                         val curDistance = e.to.distance
                         val newDistance = cur.distance + e.weight
                         if (newDistance >= curDistance) {
-                            break@CASloop
+                            break
                         }
                         if (e.to.casDistance(curDistance, newDistance)) {
                             q.add(e.to)
                             activeNodes.getAndIncrement()
-                            break@CASloop
+                            break
                         }
                     }
                 }
