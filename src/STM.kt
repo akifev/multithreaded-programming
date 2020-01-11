@@ -27,7 +27,7 @@ abstract class TxScope {
 /**
  * Transactional variable.
  */
-class TxVar<T>(initial: T)  {
+class TxVar<T>(initial: T) {
     private val loc = atomic(Loc(initial, initial, rootTx))
 
     /**
@@ -38,9 +38,15 @@ class TxVar<T>(initial: T)  {
         // todo: FIXME: this implementation does not actually implement transactional update
         while (true) {
             val curLoc = loc.value
-            val curValue = curLoc.oldValue
-            val updValue = update(curValue)
-            if (loc.compareAndSet(curLoc, Loc(updValue, updValue, tx))) return updValue
+            val curValue = curLoc.valueIn(tx) { owner -> owner.abort() }
+            if (curValue == TxStatus.ACTIVE) continue
+            val updValue = update(curValue as T)
+            val updLock = Loc(curValue, updValue, tx)
+            if (loc.compareAndSet(curLoc, updLock)) {
+                if (tx.status == TxStatus.ABORTED)
+                    tx.abort()
+                return updValue
+            }
         }
     }
 }
@@ -52,7 +58,21 @@ private class Loc<T>(
     val oldValue: T,
     val newValue: T,
     val owner: Transaction
-)
+) {
+    fun valueIn(tx: Transaction, onActive: (Transaction) -> Unit): Any? =
+        if (owner === tx) {
+            newValue
+        } else {
+            when (owner.status) {
+                TxStatus.ABORTED -> oldValue
+                TxStatus.COMMITTED -> newValue
+                TxStatus.ACTIVE -> {
+                    onActive(owner)
+                    TxStatus.ACTIVE
+                }
+            }
+        }
+}
 
 private val rootTx = Transaction().apply { commit() }
 
