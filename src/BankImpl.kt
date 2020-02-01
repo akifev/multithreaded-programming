@@ -1,4 +1,4 @@
-import kotlinx.atomicfu.*
+import kotlinx.atomicfu.atomicArrayOfNulls
 
 /**
  * Bank implementation.
@@ -18,7 +18,9 @@ class BankImpl(override val numberOfAccounts: Int) : Bank {
      */
     private val accounts = atomicArrayOfNulls<Account>(numberOfAccounts)
 
-    init { for (i in 0 until numberOfAccounts) accounts[i].value = Account(0) }
+    init {
+        for (i in 0 until numberOfAccounts) accounts[i].value = Account(0)
+    }
 
     private fun account(index: Int) = accounts[index].value!!
 
@@ -68,16 +70,15 @@ class BankImpl(override val numberOfAccounts: Int) : Bank {
     }
 
     override fun withdraw(index: Int, amount: Long): Long {
-        // todo: write withdraw operation using deposit as an example
-        /*
-         * Basically, implementation of this method must perform the logic of the following code "atomically":
-         */
         require(amount > 0) { "Invalid amount: $amount" }
-        val account = account(index)
-        check(account.amount - amount >= 0) { "Underflow" }
-        val updated = Account(account.amount - amount)
-        accounts[index].value = updated
-        return updated.amount
+
+        while (true) {
+            val account = account(index)
+            if (account.invokeOperation()) continue
+            check(account.amount - amount >= 0) { "Underflow" }
+            val updated = Account(account.amount - amount)
+            if (accounts[index].compareAndSet(account, updated)) return updated.amount
+        }
     }
 
     override fun transfer(fromIndex: Int, toIndex: Int, amount: Long) {
@@ -103,7 +104,6 @@ class BankImpl(override val numberOfAccounts: Int) : Bank {
      * This method returns null if op.completed is true.
      */
     private fun acquire(index: Int, op: Op): AcquiredAccount? {
-        // todo: write the implementation of this method with the following logic:
         /*
          * This method must loop trying to replace accounts[index] with an instance of
          *     new AcquiredAccount(<old-amount>, op) until that successfully happens and return the
@@ -119,11 +119,17 @@ class BankImpl(override val numberOfAccounts: Int) : Bank {
          *
          * Basically, implementation of this method must perform the logic of the following code "atomically":
          */
-        if (op.completed) return null
-        val account = account(index)
-        val acquiredAccount = AcquiredAccount(account.amount, op)
-        accounts[index].value = acquiredAccount
-        return acquiredAccount
+        while (true) {
+            val currentAccount: Account = account(index)
+            if (op.completed) return null
+
+            if (currentAccount is AcquiredAccount && currentAccount.op === op) return currentAccount
+
+            if (!currentAccount.invokeOperation()) {
+                val acquiredAccount = AcquiredAccount(currentAccount.amount, op)
+                if (accounts[index].compareAndSet(currentAccount, acquiredAccount)) return acquiredAccount
+            }
+        }
     }
 
     /**
@@ -224,7 +230,6 @@ class BankImpl(override val numberOfAccounts: Int) : Bank {
         var errorMessage: String? = null
 
         override fun invokeOperation() {
-            // todo: write implementation for this method, use TotalAmountOp as an example
             /*
              * In the implementation of this operation only two accounts (with fromIndex and toIndex) needs
              * to be acquired. Unlike TotalAmountOp, this operation has its own result in errorMessage string,
@@ -233,16 +238,24 @@ class BankImpl(override val numberOfAccounts: Int) : Bank {
              *
              * Basically, implementation of this method must perform the logic of the following code "atomically":
              */
-            val from = account(fromIndex)
-            val to = account(toIndex)
-            when {
-                amount > from.amount -> errorMessage = "Underflow"
-                to.amount + amount > MAX_AMOUNT -> errorMessage = "Overflow"
-                else -> {
-                    accounts[fromIndex].value = Account(from.amount - amount)
-                    accounts[toIndex].value = Account(to.amount + amount)
+            acquire(fromIndex.coerceAtMost(toIndex), this)
+            val from = acquire(fromIndex, this)
+            val to = acquire(toIndex, this)
+
+            if (from != null && to != null) {
+                when {
+                    amount > from.amount -> errorMessage = "Underflow"
+                    to.amount + amount > MAX_AMOUNT -> errorMessage = "Overflow"
+                    else -> {
+                        from.newAmount = from.amount - amount
+                        to.newAmount = to.amount + amount
+                    }
                 }
             }
+            completed = true
+
+            release(fromIndex.coerceAtLeast(toIndex), this)
+            release(fromIndex.coerceAtMost(toIndex), this)
         }
     }
 }
